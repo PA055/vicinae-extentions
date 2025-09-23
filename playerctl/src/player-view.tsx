@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect } from "react";
-import { ActionPanel, Action, List, showToast, Icon, Toast, getPreferenceValues } from '@vicinae/api';
+import { ActionPanel, Action, List, showToast, Icon, Toast, getPreferenceValues, ImageLike } from '@vicinae/api';
 import { exec } from "child_process"
 import { getPlayerMetadata, PlayerMetadata } from './playerctl-utils';
 
@@ -16,7 +16,7 @@ export default function PlayerInfo() {
 
     async function loadMetadata() {
       try {
-        const data = await getPlayerMetadata();
+        const data = await getPlayerMetadata(getPreferenceValues()["playerctl-players"]);
         setPlayerMetadata(data);
       } catch (e) {
         console.error("Failed to load player metadata", e);
@@ -75,7 +75,7 @@ export default function PlayerInfo() {
 
 type PlayerAction = {
   title: string,
-  icon: string,
+  icon: ImageLike,
   action: () => void
 }
 
@@ -84,7 +84,7 @@ const selectedPlayers = getPreferenceValues()["playerctl-players"];
 const actions: PlayerAction[] = [
   {
     title: "Toggle Play/Pause",
-    icon: "media-playback-pause-symbolic",
+    icon: Icon.Pause,
     action: () => {
       exec(`playerctl --player ${selectedPlayers} play-pause`, (err, stdout) => {
         if (err) {
@@ -97,7 +97,7 @@ const actions: PlayerAction[] = [
   },
   {
     title: "Next Song",
-    icon: "media-skip-forward-symbolic",
+    icon: Icon.Forward,
     action: () => {
       exec(`playerctl --player ${selectedPlayers} next`, (err, stdout) => {
         if (err) {
@@ -110,7 +110,7 @@ const actions: PlayerAction[] = [
   },
   {
     title: "Previous Song",
-    icon: "media-skip-backward-symbolic",
+    icon: Icon.Rewind,
     action: () => {
       exec(`playerctl --player ${selectedPlayers} previous`, (err, stdout) => {
         if (err) {

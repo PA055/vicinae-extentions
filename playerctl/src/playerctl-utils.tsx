@@ -15,8 +15,8 @@ export type PlayerMetadata = {
   paused?: boolean,
 }
 
-export async function getPlayerMetadata() {
-  const metadataRaw = await execAsync(`playerctl --player ${getPreferenceValues()["playerctl-players"]} metadata`)
+export async function getPlayerMetadata(player: string) {
+  const metadataRaw = await execAsync(`playerctl --player ${player} metadata`)
   const metadata = metadataRaw.stdout.split("\n").map((u) => u.split(" ").filter((v) => v.length >= 1));
   var info: PlayerMetadata = {};
   info.player = metadata[0][0];
@@ -37,13 +37,13 @@ export async function getPlayerMetadata() {
       info.songLength = `${mins}:${String(secs).padStart(2, '0')}`
     }
   }
-  const positionRaw = await execAsync(`playerctl --player ${getPreferenceValues()["playerctl-players"]} position`)
+  const positionRaw = await execAsync(`playerctl --player ${player} position`)
   const position = Math.floor(parseFloat(positionRaw.stdout))
   const mins = Math.floor(position / 60);
   const secs = position % 60;
   info.position = `${mins}:${String(secs).padStart(2, '0')}`
 
-  const status = await execAsync(`playerctl --player ${getPreferenceValues()["playerctl-players"]} status`);
+  const status = await execAsync(`playerctl --player ${player} status`);
   if (status.stdout === "Playing")
     info.paused = false;
   else

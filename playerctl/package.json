@@ -8,7 +8,7 @@
   "author": "lufimio",
   "contributors": [],
   "pastContributors": [],
-  "icon": "extension_icon.png",
+  "icon": "headphones.png",
   "commands": [
     {
       "name": "player-view",

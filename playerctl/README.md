@@ -1,6 +1,6 @@
-# Vicinae Extension
+# A Playerctl Wrapper
 
-Congratulations on generating your new Vicinae extension!
+Just a wrapper for playerctl, i still want to add a couple of things mainly player selection and some no view commands
 
 You can install the required dependencies and run your extension in development mode like so:
 

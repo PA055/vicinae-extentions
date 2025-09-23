@@ -1,9 +1,0 @@
-#!/usr/bin/env python3
-
-import dbus
-import json
-
-player = dbus.SessionBus().get_object('org.mpris.MediaPlayer2.playerctld', '/org/mpris/MediaPlayer2')
-metadata = player.Get('org.mpris.MediaPlayer2.Player', 'Metadata', dbus_interface='org.freedesktop.DBus.Properties')
-
-print(json.dumps(metadata))
