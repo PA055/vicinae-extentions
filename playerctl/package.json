@@ -15,7 +15,17 @@
       "title": "Player View",
       "subtitle": "Info and actions for the current player",
       "description": "Provides info on the current player, and allows actions, such as play, pause, next, fast forward, etc.",
-      "mode": "view"
+      "mode": "view",
+      "preferences": [
+        {
+          "name": "refresh-intervel",
+          "title": "Refresh Interval",
+          "description": "How often the Player View should refresh the song in milliseconds",
+          "default": "5000",
+          "type": "textfield",
+          "required": true
+        }
+      ]
     }
   ],
   "preferences": [
