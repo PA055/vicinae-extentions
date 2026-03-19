@@ -1,330 +1,309 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
-	Detail,
-	ActionPanel,
-	Action,
-	Icon,
-	Toast,
-	showToast,
-	getPreferenceValues,
-	useNavigation,
+  ActionPanel,
+  Action,
+  Form,
+  showToast,
+  Toast,
+  getPreferenceValues,
+  Icon,
+  Color,
 } from "@vicinae/api";
 import {
-	RecordingState,
-	getRecordingState,
-	startRecording,
-	stopRecording,
-	startReplay,
-	stopReplay,
-	saveReplay,
-	getCurrentMonitor,
-} from "./utils/gsr";
-import { ConfigForm } from "./components/config-form";
+  type RecorderMode,
+  type CaptureSource,
+  type QualityPreset,
+  type RecorderOptions,
+  getRecorderStatus,
+  startRecording,
+  stopRecording,
+  startInstantReplay,
+  saveInstantReplay,
+} from "./recorder";
+
+type Mode = "recording" | "instant-replay";
 
 interface Preferences {
-	defaultMonitor: string;
-	defaultReplayBufferSize: string;
-	qualityPreset: string;
-	audioInput: string;
-	saveLocation: string;
+  "default-monitor": string;
+  "default-replay-buffer-size": string;
+  "quality-preset": QualityPreset;
+  "audio-input": string;
+  "save-location": string;
 }
 
-type Mode = "recording" | "instant_replay";
+function StatusDisplay({ mode }: { mode: RecorderMode }) {
+  const statusText: Record<RecorderMode, string> = {
+    idle: "Idle",
+    recording: "Recording",
+    "instant-replay": "Instant Replay",
+  };
+
+  return (
+    <Form.Description
+      title="Status"
+      text={statusText[mode]}
+    />
+  );
+}
 
 export default function MainView() {
-	const prefs = getPreferenceValues<Preferences>();
-	const { push } = useNavigation();
-	const [state, setState] = useState<RecordingState>("idle");
-	const [mode, setMode] = useState<Mode>("recording");
-	const [elapsedTime, setElapsedTime] = useState(0);
-	const [isLoading, setIsLoading] = useState(true);
+  const preferences = getPreferenceValues<Preferences>();
 
-	useEffect(() => {
-		async function init() {
-			const currentState = await getRecordingState();
-			setState(currentState);
-			setIsLoading(false);
-		}
-		init();
-	}, []);
+  const [mode, setMode] = useState<Mode>("recording");
+  const [status, setStatus] = useState<RecorderMode>("idle");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-	useEffect(() => {
-		if (state !== "idle") {
-			const interval = setInterval(() => {
-				setElapsedTime((t) => t + 1);
-			}, 1000);
-			return () => clearInterval(interval);
-		} else {
-			setElapsedTime(0);
-		}
-	}, [state]);
+  const [captureSourceType, setCaptureSourceType] = useState<"current-monitor" | "monitor" | "window">("current-monitor");
+  const [monitorId, setMonitorId] = useState("");
+  const [quality, setQuality] = useState<QualityPreset>(preferences["quality-preset"] || "high");
+  const [audioInput, setAudioInput] = useState(preferences["audio-input"] || "");
+  const [saveLocation, setSaveLocation] = useState(
+    preferences["save-location"] || `${process.env.HOME}/Videos`
+  );
+  const [bufferSize, setBufferSize] = useState(
+    parseInt(preferences["default-replay-buffer-size"]) || 60
+  );
 
-	const formatTime = (seconds: number): string => {
-		const hrs = Math.floor(seconds / 3600);
-		const mins = Math.floor((seconds % 3600) / 60);
-		const secs = seconds % 60;
-		if (hrs > 0) {
-			return `${hrs}:${mins.toString().padStart(2, "0")}:${secs
-				.toString()
-				.padStart(2, "0")}`;
-		}
-		return `${mins}:${secs.toString().padStart(2, "0")}`;
-	};
+  const fetchStatus = useCallback(async () => {
+    const currentStatus = await getRecorderStatus();
+    setStatus(currentStatus);
+    setIsLoading(false);
+  }, []);
 
-	const getStatusEmoji = (): string => {
-		switch (state) {
-			case "idle":
-				return "⚪";
-			case "recording":
-				return "🔴";
-			case "instant_replay":
-				return "🟡";
-			default:
-				return "⚪";
-		}
-	};
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 1000);
+    return () => clearInterval(interval);
+  }, [fetchStatus]);
 
-	const getStatusText = (): string => {
-		switch (state) {
-			case "idle":
-				return "Idle";
-			case "recording":
-				return `Recording • ${formatTime(elapsedTime)}`;
-			case "instant_replay":
-				return `Instant Replay • Buffer: ${prefs.defaultReplayBufferSize || 60}s`;
-			default:
-				return "Unknown";
-		}
-	};
+  const getCaptureSource = (): CaptureSource => {
+    if (captureSourceType === "current-monitor") {
+      return { type: "current-monitor" };
+    } else if (captureSourceType === "monitor") {
+      return { type: "monitor", id: monitorId || preferences["default-monitor"] };
+    } else {
+      return { type: "window" };
+    }
+  };
 
-	const getMarkdown = (): string => {
-		const bufferSize = prefs.defaultReplayBufferSize || "60";
-		const quality = prefs.qualityPreset || "very_high";
-		const monitor = prefs.defaultMonitor || "auto-detect";
-		const audio = prefs.audioInput || "none";
-		const saveDir = prefs.saveLocation || "~/Videos";
+  const handleStart = async () => {
+    setIsProcessing(true);
+    try {
+      if (status !== "idle") {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "Recorder is active",
+          message: "Stop the current recording first",
+        });
+        setIsProcessing(false);
+        return;
+      }
 
-		let statusSection = `## ${getStatusEmoji()} ${getStatusText()}`;
+      const options: RecorderOptions = {
+        captureSource: getCaptureSource(),
+        quality,
+        audioInput: audioInput || undefined,
+        saveLocation,
+        bufferSize: mode === "instant-replay" ? bufferSize : undefined,
+      };
 
-		if (state !== "idle") {
-			statusSection += `\n\n**Mode:** ${mode === "recording" ? "Recording" : "Instant Replay"}`;
-		}
+      let result: { success: boolean; error?: string };
+      if (mode === "recording") {
+        result = await startRecording(options);
+      } else {
+        result = await startInstantReplay(options);
+      }
 
-		return `# GPU Screen Recorder
+      if (result.success) {
+        await showToast({
+          style: Toast.Style.Success,
+          title: `${mode === "recording" ? "Recording" : "Instant Replay"} started`,
+          message: mode === "instant-replay" ? `${bufferSize}s buffer` : undefined,
+        });
+        await fetchStatus();
+      } else {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "Failed to start",
+          message: result.error,
+        });
+      }
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Error",
+        message: String(error),
+      });
+    }
+    setIsProcessing(false);
+  };
 
-${statusSection}
+  const handleStop = async () => {
+    setIsProcessing(true);
+    try {
+      const result = await stopRecording();
+      if (result.success) {
+        await showToast({
+          style: Toast.Style.Success,
+          title: "Stopped",
+          message: status === "recording" ? "Recording saved" : "Instant Replay stopped",
+        });
+        await fetchStatus();
+      } else {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "Failed to stop",
+          message: result.error,
+        });
+      }
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Error",
+        message: String(error),
+      });
+    }
+    setIsProcessing(false);
+  };
 
----
+  const handleSaveReplay = async () => {
+    setIsProcessing(true);
+    try {
+      const result = await saveInstantReplay();
+      if (result.success) {
+        await showToast({
+          style: Toast.Style.Success,
+          title: "Saved",
+          message: "Last replay saved",
+        });
+      } else {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "Failed to save",
+          message: result.error,
+        });
+      }
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Error",
+        message: String(error),
+      });
+    }
+    setIsProcessing(false);
+  };
 
-## Current Settings
+  const getPrimaryActionTitle = () => {
+    if (status !== "idle") {
+      return "Stop";
+    }
+    return mode === "recording" ? "Start Recording" : "Start Instant Replay";
+  };
 
-| Setting | Value |
-|---------|-------|
-| Monitor | ${monitor} |
-| Quality | ${quality} |
-| Audio | ${audio} |
-| Save Location | ${saveDir} |
-| Buffer Size | ${bufferSize}s |
-`;
-	};
+  const handlePrimaryAction = () => {
+    if (status !== "idle") {
+      handleStop();
+    } else {
+      handleStart();
+    }
+  };
 
-	const handleStartRecording = async () => {
-		if (state !== "idle") return;
+  return (
+    <Form
+      isLoading={isLoading}
+      actions={
+        <ActionPanel>
+          <Action
+            title={getPrimaryActionTitle()}
+            onAction={handlePrimaryAction}
+            icon={status !== "idle" ? Icon.Stop : Icon.CircleFilled}
+          />
+          {status === "instant-replay" && (
+            <Action
+              title="Save Instant Replay"
+              onAction={handleSaveReplay}
+              icon={Icon.Download}
+              shortcut={{ modifiers: ["cmd"], key: "s" }}
+            />
+          )}
+        </ActionPanel>
+      }
+    >
+      <Form.Description title="" text="GPU Screen Recorder Control Panel" />
 
-		const captureSource =
-			prefs.defaultMonitor || (await getCurrentMonitor()) || "screen";
-		const expandedPath = (
-			prefs.saveLocation || `${process.env.HOME}/Videos`
-		).replace(/^~/, process.env.HOME || "");
+      <StatusDisplay mode={status} />
 
-		const result = await startRecording({
-			captureSource: { type: "monitor", name: captureSource },
-			quality:
-				(prefs.qualityPreset as "medium" | "high" | "very_high" | "ultra") ||
-				"very_high",
-			audioInput: prefs.audioInput || undefined,
-			saveLocation: expandedPath,
-		});
+      <Form.Separator />
 
-		if (result.success) {
-			setState("recording");
-			setMode("recording");
-			await showToast({
-				title: "Recording started",
-				style: Toast.Style.Success,
-			});
-		} else {
-			await showToast({
-				title: "Failed to start recording",
-				message: result.error,
-				style: Toast.Style.Failure,
-			});
-		}
-	};
+      <Form.Dropdown
+        id="mode"
+        title="Mode"
+        value={mode}
+        onChange={(value) => setMode(value as Mode)}
+      >
+        <Form.Dropdown.Item value="recording" title="Recording" />
+        <Form.Dropdown.Item value="instant-replay" title="Instant Replay" />
+      </Form.Dropdown>
 
-	const handleStopRecording = async () => {
-		if (state !== "recording") return;
+      {mode === "instant-replay" && (
+        <Form.TextField
+          id="buffer-size"
+          title="Buffer (sec)"
+          placeholder="60"
+          value={String(bufferSize)}
+          onChange={(value) => setBufferSize(parseInt(value) || 60)}
+        />
+      )}
 
-		const result = await stopRecording();
-		if (result.success) {
-			setState("idle");
-			await showToast({
-				title: "Recording stopped",
-				style: Toast.Style.Success,
-			});
-		} else {
-			await showToast({
-				title: "Failed to stop recording",
-				message: result.error,
-				style: Toast.Style.Failure,
-			});
-		}
-	};
+      <Form.Dropdown
+        id="capture-source"
+        title="Capture"
+        value={captureSourceType}
+        onChange={(value) => setCaptureSourceType(value as "current-monitor" | "monitor" | "window")}
+      >
+        <Form.Dropdown.Item value="current-monitor" title="Current Monitor" />
+        <Form.Dropdown.Item value="monitor" title="Select Monitor" />
+        <Form.Dropdown.Item value="window" title="Window (Wayland)" />
+      </Form.Dropdown>
 
-	const handleStartReplay = async () => {
-		if (state !== "idle") return;
+      {captureSourceType === "monitor" && (
+        <Form.TextField
+          id="monitor-id"
+          title="Monitor ID"
+          placeholder={preferences["default-monitor"] || "DP-1"}
+          value={monitorId}
+          onChange={setMonitorId}
+        />
+      )}
 
-		const captureSource =
-			prefs.defaultMonitor || (await getCurrentMonitor()) || "screen";
-		const expandedPath = (
-			prefs.saveLocation || `${process.env.HOME}/Videos`
-		).replace(/^~/, process.env.HOME || "");
-		const bufferSize = parseInt(prefs.defaultReplayBufferSize || "60", 10);
+      <Form.Dropdown
+        id="quality"
+        title="Quality"
+        value={quality}
+        onChange={(value) => setQuality(value as QualityPreset)}
+      >
+        <Form.Dropdown.Item value="medium" title="Medium" />
+        <Form.Dropdown.Item value="high" title="High" />
+        <Form.Dropdown.Item value="very_high" title="Very High" />
+        <Form.Dropdown.Item value="ultra" title="Ultra" />
+      </Form.Dropdown>
 
-		const result = await startReplay({
-			captureSource: { type: "monitor", name: captureSource },
-			quality:
-				(prefs.qualityPreset as "medium" | "high" | "very_high" | "ultra") ||
-				"very_high",
-			audioInput: prefs.audioInput || undefined,
-			saveLocation: expandedPath,
-			bufferSize,
-		});
+      <Form.TextField
+        id="audio-input"
+        title="Audio"
+        placeholder="default_output (optional)"
+        value={audioInput}
+        onChange={setAudioInput}
+      />
 
-		if (result.success) {
-			setState("instant_replay");
-			setMode("instant_replay");
-			await showToast({
-				title: `Instant Replay started (${bufferSize}s buffer)`,
-				style: Toast.Style.Success,
-			});
-		} else {
-			await showToast({
-				title: "Failed to start instant replay",
-				message: result.error,
-				style: Toast.Style.Failure,
-			});
-		}
-	};
-
-	const handleStopReplay = async () => {
-		if (state !== "instant_replay") return;
-
-		const result = await stopReplay();
-		if (result.success) {
-			setState("idle");
-			await showToast({
-				title: "Instant Replay stopped",
-				style: Toast.Style.Success,
-			});
-		} else {
-			await showToast({
-				title: "Failed to stop instant replay",
-				message: result.error,
-				style: Toast.Style.Failure,
-			});
-		}
-	};
-
-	const handleSaveClip = async () => {
-		if (state !== "instant_replay") return;
-
-		const bufferSize = parseInt(prefs.defaultReplayBufferSize || "60", 10);
-		const result = await saveReplay();
-
-		if (result.success) {
-			await showToast({
-				title: `Saved last ${bufferSize} seconds`,
-				style: Toast.Style.Success,
-			});
-		} else {
-			await showToast({
-				title: "Failed to save clip",
-				message: result.error,
-				style: Toast.Style.Failure,
-			});
-		}
-	};
-
-	const handleOpenConfig = () => {
-		push(<ConfigForm />);
-	};
-
-	if (isLoading) {
-		return <Detail markdown="# GPU Screen Recorder\n\nLoading..." />;
-	}
-
-	return (
-		<Detail
-			markdown={getMarkdown()}
-			actions={
-				<ActionPanel>
-					{state === "idle" && (
-						<>
-							<Action
-								title="Start Recording"
-								icon={Icon.CircleFilled}
-								onAction={handleStartRecording}
-							/>
-							<Action
-								title="Start Instant Replay"
-								icon={Icon.Clock}
-								onAction={handleStartReplay}
-							/>
-							<Action
-								title="Configure"
-								icon={Icon.Gear}
-								onAction={handleOpenConfig}
-							/>
-						</>
-					)}
-
-					{state === "recording" && (
-						<>
-							<Action
-								title="Stop Recording"
-								icon={Icon.Stop}
-								onAction={handleStopRecording}
-							/>
-							<Action
-								title="Configure"
-								icon={Icon.Gear}
-								onAction={handleOpenConfig}
-							/>
-						</>
-					)}
-
-					{state === "instant_replay" && (
-						<>
-							<Action
-								title="Save Clip"
-								icon={Icon.Save}
-								onAction={handleSaveClip}
-							/>
-							<Action
-								title="Stop Instant Replay"
-								icon={Icon.Stop}
-								onAction={handleStopReplay}
-							/>
-							<Action
-								title="Configure"
-								icon={Icon.Gear}
-								onAction={handleOpenConfig}
-							/>
-						</>
-					)}
-				</ActionPanel>
-			}
-		/>
-	);
+      <Form.TextField
+        id="save-location"
+        title="Save to"
+        placeholder="~/Videos"
+        value={saveLocation}
+        onChange={setSaveLocation}
+      />
+    </Form>
+  );
 }
