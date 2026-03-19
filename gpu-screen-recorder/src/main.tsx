@@ -7,7 +7,6 @@ import {
   Toast,
   getPreferenceValues,
   Icon,
-  Color,
 } from "@vicinae/api";
 import {
   type RecorderMode,
@@ -19,6 +18,8 @@ import {
   stopRecording,
   startInstantReplay,
   saveInstantReplay,
+  getAudioDevices,
+  getApplicationAudio,
 } from "./recorder";
 
 type Mode = "recording" | "instant-replay";
@@ -64,6 +65,8 @@ export default function MainView() {
   const [bufferSize, setBufferSize] = useState(
     parseInt(preferences["default-replay-buffer-size"]) || 60
   );
+  const [audioDevices, setAudioDevices] = useState<Array<{ id: string; name: string }>>([]);
+  const [appAudio, setAppAudio] = useState<Array<{ id: string; name: string }>>([]);
 
   const fetchStatus = useCallback(async () => {
     const currentStatus = await getRecorderStatus();
@@ -76,6 +79,18 @@ export default function MainView() {
     const interval = setInterval(fetchStatus, 1000);
     return () => clearInterval(interval);
   }, [fetchStatus]);
+
+  useEffect(() => {
+    async function fetchAudio() {
+      const [devices, apps] = await Promise.all([
+        getAudioDevices(),
+        getApplicationAudio(),
+      ]);
+      setAudioDevices(devices);
+      setAppAudio(apps);
+    }
+    fetchAudio();
+  }, []);
 
   const getCaptureSource = (): CaptureSource => {
     if (captureSourceType === "current-monitor") {
@@ -289,13 +304,28 @@ export default function MainView() {
         <Form.Dropdown.Item value="ultra" title="Ultra" />
       </Form.Dropdown>
 
-      <Form.TextField
+      <Form.Dropdown
         id="audio-input"
         title="Audio"
-        placeholder="default_output (optional)"
         value={audioInput}
         onChange={setAudioInput}
-      />
+      >
+        <Form.Dropdown.Item value="" title="None" />
+        {audioDevices.length > 0 && (
+          <Form.Dropdown.Item title="──── Audio Devices ────" value="__divider__" />
+        )}
+        {audioDevices.map((device) => (
+          <Form.Dropdown.Item key={device.id} value={device.id} title={device.name} />
+        ))}
+        {appAudio.length > 0 && (
+          <>
+            <Form.Dropdown.Item title="──── Applications ────" value="__divider2__" />
+            {appAudio.map((app) => (
+              <Form.Dropdown.Item key={app.id} value={app.id} title={app.name} />
+            ))}
+          </>
+        )}
+      </Form.Dropdown>
 
       <Form.TextField
         id="save-location"

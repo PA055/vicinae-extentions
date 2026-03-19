@@ -129,6 +129,50 @@ export function buildSaveReplayCommand(): string {
   return "gpu-screen-recorder -s";
 }
 
+export interface AudioDevice {
+  id: string;
+  name: string;
+}
+
+export async function getAudioDevices(): Promise<AudioDevice[]> {
+  try {
+    const { stdout } = await execAsync("gpu-screen-recorder --list-audio-devices 2>/dev/null || echo ''");
+    const devices: AudioDevice[] = [];
+    for (const line of stdout.trim().split("\n")) {
+      if (!line) continue;
+      const [id, ...nameParts] = line.split("|");
+      if (id && nameParts.length > 0) {
+        devices.push({ id, name: nameParts.join("|") });
+      }
+    }
+    return devices;
+  } catch {
+    return [];
+  }
+}
+
+export interface ApplicationAudio {
+  id: string;
+  name: string;
+}
+
+export async function getApplicationAudio(): Promise<ApplicationAudio[]> {
+  try {
+    const { stdout } = await execAsync("gpu-screen-recorder --list-application-audio 2>/dev/null || echo ''");
+    const apps: ApplicationAudio[] = [];
+    for (const line of stdout.trim().split("\n")) {
+      if (!line || line.includes("|")) continue;
+      const name = line.trim();
+      if (name) {
+        apps.push({ id: name, name });
+      }
+    }
+    return apps;
+  } catch {
+    return [];
+  }
+}
+
 export async function startRecording(options: RecorderOptions): Promise<{ success: boolean; error?: string }> {
   const command = await buildRecordingCommand(options);
   console.log("Starting recording with command:", command);
