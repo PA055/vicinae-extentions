@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   ActionPanel,
   Action,
@@ -7,6 +7,7 @@ import {
   Toast,
   getPreferenceValues,
   Icon,
+  Cache,
 } from "@vicinae/api";
 import {
   type RecorderMode,
@@ -32,6 +33,44 @@ interface Preferences {
   "save-location": string;
 }
 
+interface CachedSettings {
+  mode: Mode;
+  captureSourceType: "current-monitor" | "monitor" | "window";
+  monitorId: string;
+  quality: QualityPreset;
+  audioInput: string;
+  saveLocation: string;
+  bufferSize: number;
+}
+
+const DEFAULT_SETTINGS: CachedSettings = {
+  mode: "recording",
+  captureSourceType: "current-monitor",
+  monitorId: "",
+  quality: "high",
+  audioInput: "",
+  saveLocation: `${process.env.HOME}/Videos`,
+  bufferSize: 0,
+};
+
+const cache = new Cache({ namespace: "settings" });
+
+function loadSettings(): CachedSettings {
+  try {
+    const data = cache.get("settings");
+    if (data) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
+    }
+  } catch {
+    // ignore
+  }
+  return DEFAULT_SETTINGS;
+}
+
+function saveSettings(settings: CachedSettings): void {
+  cache.set("settings", JSON.stringify(settings));
+}
+
 function StatusDisplay({ mode }: { mode: RecorderMode }) {
   const statusText: Record<RecorderMode, string> = {
     idle: "Idle",
@@ -49,28 +88,28 @@ function StatusDisplay({ mode }: { mode: RecorderMode }) {
 
 export default function MainView() {
   const preferences = getPreferenceValues<Preferences>();
+  const initialSettings = useMemo(() => loadSettings(), []);
 
-  const [mode, setMode] = useState<Mode>("recording");
+  const [mode, setMode] = useState<Mode>(initialSettings.mode);
   const [status, setStatus] = useState<RecorderMode>("idle");
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const [captureSourceType, setCaptureSourceType] = useState<"current-monitor" | "monitor" | "window">("current-monitor");
-  const [monitorId, setMonitorId] = useState("");
-  const [quality, setQuality] = useState<QualityPreset>(preferences["quality-preset"] || "high");
-  const [audioInput, setAudioInput] = useState(preferences["audio-input"] || "");
-  const [saveLocation, setSaveLocation] = useState(
-    preferences["save-location"] || `${process.env.HOME}/Videos`
-  );
-  const [bufferSize, setBufferSize] = useState(
-    parseInt(preferences["default-replay-buffer-size"]) || 60
-  );
+  const [captureSourceType, setCaptureSourceType] = useState<"current-monitor" | "monitor" | "window">(initialSettings.captureSourceType);
+  const [monitorId, setMonitorId] = useState(initialSettings.monitorId);
+  const [quality, setQuality] = useState<QualityPreset>(initialSettings.quality);
+  const [audioInput, setAudioInput] = useState(initialSettings.audioInput);
+  const [saveLocation, setSaveLocation] = useState(initialSettings.saveLocation);
+  const [bufferSize, setBufferSize] = useState(initialSettings.bufferSize);
   const [audioDevices, setAudioDevices] = useState<Array<{ id: string; name: string }>>([]);
   const [appAudio, setAppAudio] = useState<Array<{ id: string; name: string }>>([]);
 
   const fetchStatus = useCallback(async () => {
     const currentStatus = await getRecorderStatus();
     setStatus(currentStatus);
+    if (currentStatus === "instant-replay") {
+      setMode("instant-replay");
+    }
     setIsLoading(false);
   }, []);
 
@@ -91,6 +130,30 @@ export default function MainView() {
     }
     fetchAudio();
   }, []);
+
+  const currentSettings = useMemo((): CachedSettings => ({
+    mode,
+    captureSourceType,
+    monitorId,
+    quality,
+    audioInput,
+    saveLocation,
+    bufferSize,
+  }), [mode, captureSourceType, monitorId, quality, audioInput, saveLocation, bufferSize]);
+
+  const updateSetting = useCallback((key: keyof CachedSettings, value: unknown) => {
+    switch (key) {
+      case "mode": setMode(value as Mode); break;
+      case "captureSourceType": setCaptureSourceType(value as "current-monitor" | "monitor" | "window"); break;
+      case "monitorId": setMonitorId(value as string); break;
+      case "quality": setQuality(value as QualityPreset); break;
+      case "audioInput": setAudioInput(value as string); break;
+      case "saveLocation": setSaveLocation(value as string); break;
+      case "bufferSize": setBufferSize(value as number); break;
+    }
+    const newSettings = { ...currentSettings, [key]: value };
+    saveSettings(newSettings);
+  }, [currentSettings]);
 
   const getCaptureSource = (): CaptureSource => {
     if (captureSourceType === "current-monitor") {
@@ -115,12 +178,13 @@ export default function MainView() {
         return;
       }
 
+      const effectiveBufferSize = bufferSize || 60;
       const options: RecorderOptions = {
         captureSource: getCaptureSource(),
         quality,
         audioInput: audioInput || undefined,
         saveLocation,
-        bufferSize: mode === "instant-replay" ? bufferSize : undefined,
+        bufferSize: mode === "instant-replay" ? effectiveBufferSize : undefined,
       };
 
       let result: { success: boolean; error?: string };
@@ -134,7 +198,7 @@ export default function MainView() {
         await showToast({
           style: Toast.Style.Success,
           title: `${mode === "recording" ? "Recording" : "Instant Replay"} started`,
-          message: mode === "instant-replay" ? `${bufferSize}s buffer` : undefined,
+          message: mode === "instant-replay" ? `${effectiveBufferSize}s buffer` : undefined,
         });
         await fetchStatus();
       } else {
@@ -255,7 +319,7 @@ export default function MainView() {
         id="mode"
         title="Mode"
         value={mode}
-        onChange={(value) => setMode(value as Mode)}
+        onChange={(value) => updateSetting("mode", value as Mode)}
       >
         <Form.Dropdown.Item value="recording" title="Recording" />
         <Form.Dropdown.Item value="instant-replay" title="Instant Replay" />
@@ -266,8 +330,16 @@ export default function MainView() {
           id="buffer-size"
           title="Buffer (sec)"
           placeholder="60"
-          value={String(bufferSize)}
-          onChange={(value) => setBufferSize(parseInt(value) || 60)}
+          value={bufferSize === 0 ? "" : String(bufferSize)}
+          onChange={(value) => {
+            const num = parseInt(value);
+            if (value === "" || isNaN(num)) {
+              setBufferSize(0);
+            } else {
+              setBufferSize(num);
+              updateSetting("bufferSize", num);
+            }
+          }}
         />
       )}
 
@@ -275,7 +347,7 @@ export default function MainView() {
         id="capture-source"
         title="Capture"
         value={captureSourceType}
-        onChange={(value) => setCaptureSourceType(value as "current-monitor" | "monitor" | "window")}
+        onChange={(value) => updateSetting("captureSourceType", value as "current-monitor" | "monitor" | "window")}
       >
         <Form.Dropdown.Item value="current-monitor" title="Current Monitor" />
         <Form.Dropdown.Item value="monitor" title="Select Monitor" />
@@ -288,7 +360,7 @@ export default function MainView() {
           title="Monitor ID"
           placeholder={preferences["default-monitor"] || "DP-1"}
           value={monitorId}
-          onChange={setMonitorId}
+          onChange={(value) => updateSetting("monitorId", value)}
         />
       )}
 
@@ -296,7 +368,7 @@ export default function MainView() {
         id="quality"
         title="Quality"
         value={quality}
-        onChange={(value) => setQuality(value as QualityPreset)}
+        onChange={(value) => updateSetting("quality", value as QualityPreset)}
       >
         <Form.Dropdown.Item value="medium" title="Medium" />
         <Form.Dropdown.Item value="high" title="High" />
@@ -308,7 +380,7 @@ export default function MainView() {
         id="audio-input"
         title="Audio"
         value={audioInput}
-        onChange={setAudioInput}
+        onChange={(value) => updateSetting("audioInput", value)}
       >
         <Form.Dropdown.Item value="" title="None" />
         {audioDevices.length > 0 && (
@@ -332,7 +404,7 @@ export default function MainView() {
         title="Save to"
         placeholder="~/Videos"
         value={saveLocation}
-        onChange={setSaveLocation}
+        onChange={(value) => updateSetting("saveLocation", value)}
       />
     </Form>
   );
